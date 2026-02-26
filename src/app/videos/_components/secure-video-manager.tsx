@@ -92,6 +92,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const [passphrase, setPassphrase] = useState("");
+  const [showPassphrase, setShowPassphrase] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
@@ -248,7 +249,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
   return (
     <>
       <form onSubmit={onUpload} className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="grid gap-3 md:grid-cols-[1fr_240px_auto] md:items-center">
+        <div className="grid gap-3 md:grid-cols-[1fr_300px_auto] md:items-center">
           <input
             name="file"
             type="file"
@@ -257,13 +258,24 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
             required
             className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-900 file:px-3 file:py-2 file:text-white dark:file:bg-zinc-100 dark:file:text-zinc-900"
           />
-          <input
-            type="password"
-            placeholder="복호화 비밀번호 (6자+)"
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            className="rounded-lg border px-3 py-2 text-sm"
-          />
+
+          <div className="flex items-center gap-2">
+            <input
+              type={showPassphrase ? "text" : "password"}
+              placeholder="복호화 비밀번호 (6자+)"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassphrase((v) => !v)}
+              className="rounded-lg border px-3 py-2 text-xs font-medium"
+            >
+              {showPassphrase ? "숨김" : "표시"}
+            </button>
+          </div>
+
           <button disabled={uploading} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
             {uploading ? `업로드 중... ${uploadProgress}%` : "암호화 업로드"}
           </button>
@@ -316,10 +328,6 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
                   </button>
                 </div>
 
-                {blobUrls[v.id] ? (
-                  <video className="mt-3 w-full rounded-lg border bg-black" controls preload="metadata" src={blobUrls[v.id]} />
-                ) : null}
-
                 {deletingId === v.id ? (
                   <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm dark:border-rose-800 dark:bg-rose-900/20">
                     <p className="font-semibold text-rose-700 dark:text-rose-300">삭제 확인</p>
@@ -356,6 +364,10 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
                       </button>
                     </div>
                   </div>
+                ) : null}
+
+                {blobUrls[v.id] ? (
+                  <video className="mt-3 w-full rounded-lg border bg-black" controls preload="metadata" src={blobUrls[v.id]} />
                 ) : null}
               </li>
             ))}
