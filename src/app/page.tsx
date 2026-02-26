@@ -18,7 +18,7 @@ export default async function Home() {
 
       <div className="flex flex-wrap gap-2">
         <Link
-          href="/auth"
+          href="/auth/login"
           className="rounded border px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-900"
         >
           로그인/회원가입 페이지

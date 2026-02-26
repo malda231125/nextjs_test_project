@@ -9,7 +9,7 @@ export default async function VideosPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) redirect(`/auth?message=${encodeURIComponent("로그인 후 이용해주세요.")}`);
+  if (!user) redirect(`/auth/login?message=${encodeURIComponent("로그인 후 이용해주세요.")}`);
 
   const { data: videos } = await supabase
     .from("videos")

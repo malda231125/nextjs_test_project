@@ -14,7 +14,7 @@ export async function signInWithEmail(formData: FormData) {
   });
 
   if (error) {
-    redirect(`/auth?message=${encodeURIComponent(error.message)}`);
+    redirect(`/auth/login?message=${encodeURIComponent(error.message)}`);
   }
 
   redirect("/");
@@ -34,10 +34,10 @@ export async function signUpWithEmail(formData: FormData) {
   });
 
   if (error) {
-    redirect(`/auth?message=${encodeURIComponent(error.message)}`);
+    redirect(`/auth/signup?message=${encodeURIComponent(error.message)}`);
   }
 
-  redirect("/auth?message=가입 완료! 이메일 인증 후 로그인해줘.");
+  redirect(`/auth/login?message=${encodeURIComponent("가입 완료! 이메일 인증 후 로그인해줘.")}`);
 }
 
 export async function signOut() {
