@@ -17,8 +17,9 @@ type VideoRow = {
   created_at: string;
 };
 
-const BUCKET = process.env.NEXT_PUBLIC_SUPABASE_VIDEO_BUCKET ?? "encrypted-videos";
-const MAX_UPLOAD_MB = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB ?? "1024");
+const BUCKET = (process.env.NEXT_PUBLIC_SUPABASE_VIDEO_BUCKET ?? "encrypted-videos").trim();
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+const MAX_UPLOAD_MB = Number((process.env.NEXT_PUBLIC_MAX_UPLOAD_MB ?? "1024").trim());
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
 async function uploadWithTus(params: {
@@ -27,7 +28,7 @@ async function uploadWithTus(params: {
   accessToken: string;
   onProgress?: (percent: number) => void;
 }) {
-  const endpoint = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/upload/resumable`;
+  const endpoint = `${SUPABASE_URL}/storage/v1/upload/resumable`;
 
   await new Promise<void>((resolve, reject) => {
     const upload = new tus.Upload(params.file, {
@@ -46,7 +47,28 @@ async function uploadWithTus(params: {
         apikey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
         "x-upsert": "false",
       },
-      onError: (error) => reject(error),
+      onError: (error) => {
+        const e = error as unknown as {
+          message?: string;
+          originalResponse?: { getStatus?: () => number; getBody?: () => string };
+          originalRequest?: { getMethod?: () => string; getURL?: () => string };
+        };
+
+        const status = e.originalResponse?.getStatus?.();
+        const body = e.originalResponse?.getBody?.();
+        const method = e.originalRequest?.getMethod?.();
+        const url = e.originalRequest?.getURL?.();
+        const detail = [
+          e.message,
+          method && url ? `request: ${method} ${url}` : null,
+          status ? `status: ${status}` : null,
+          body ? `response: ${body}` : null,
+        ]
+          .filter(Boolean)
+          .join(" | ");
+
+        reject(new Error(detail || "TUS upload failed"));
+      },
       onProgress: (uploaded, total) => {
         if (params.onProgress && total > 0) {
           params.onProgress(Math.round((uploaded / total) * 100));
@@ -198,7 +220,17 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
           </button>
         </div>
         <p className="mt-2 text-xs text-zinc-500">※ 비밀번호를 잊으면 복호화할 수 없습니다. 업로드 제한: {MAX_UPLOAD_MB}MB</p>
-        {message ? <p className="mt-3 text-sm text-zinc-700 dark:text-zinc-200">{message}</p> : null}
+        {message ? <p className="mt-3 break-all text-sm text-zinc-700 dark:text-zinc-200">{message}</p> : null}
+
+        <details className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-700 dark:bg-zinc-800/30">
+          <summary className="cursor-pointer font-semibold">업로드 디버그 정보</summary>
+          <ul className="mt-2 space-y-1 break-all text-zinc-600 dark:text-zinc-300">
+            <li>bucket: {BUCKET}</li>
+            <li>endpoint: {SUPABASE_URL}/storage/v1/upload/resumable</li>
+            <li>maxUploadMB: {MAX_UPLOAD_MB}</li>
+            <li>userId: {userId}</li>
+          </ul>
+        </details>
       </form>
 
       <section className="mt-8">
