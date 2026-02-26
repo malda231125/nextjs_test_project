@@ -148,10 +148,10 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
         ) : (
           <ul className="grid gap-4 md:grid-cols-2">
             {initialVideos.map((v) => (
-              <li key={v.id} className="rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                <p className="line-clamp-1 font-medium">{v.filename}</p>
+              <li key={v.id} className="min-w-0 overflow-hidden rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <p className="truncate font-medium">{v.filename}</p>
                 <p className="mt-1 text-xs text-zinc-500">{new Date(v.created_at).toLocaleString()}</p>
-                <p className="mt-1 text-xs text-zinc-500">{v.mime_type} · {formatBytes(v.size_bytes ?? 0)}</p>
+                <p className="mt-1 break-all text-xs text-zinc-500">{v.mime_type} · {formatBytes(v.size_bytes ?? 0)}</p>
 
                 {!blobUrls[v.id] ? (
                   <button
