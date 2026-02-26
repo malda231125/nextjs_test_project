@@ -17,6 +17,8 @@ type VideoRow = {
 };
 
 const BUCKET = process.env.NEXT_PUBLIC_SUPABASE_VIDEO_BUCKET ?? "encrypted-videos";
+const MAX_UPLOAD_MB = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB ?? "1024");
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
 function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
@@ -41,6 +43,10 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
     const file = input.files?.[0];
 
     if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setMessage(`업로드 실패: 파일이 너무 큽니다. 현재 제한은 ${MAX_UPLOAD_MB}MB 입니다.`);
+      return;
+    }
     if (!passphrase || passphrase.length < 6) {
       setMessage("복호화 비밀번호를 6자 이상 입력해주세요.");
       return;
@@ -137,7 +143,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
             {uploading ? "업로드 중..." : "암호화 업로드"}
           </button>
         </div>
-        <p className="mt-2 text-xs text-zinc-500">※ 비밀번호를 잊으면 복호화할 수 없습니다.</p>
+        <p className="mt-2 text-xs text-zinc-500">※ 비밀번호를 잊으면 복호화할 수 없습니다. 업로드 제한: {MAX_UPLOAD_MB}MB</p>
         {message ? <p className="mt-3 text-sm text-zinc-700 dark:text-zinc-200">{message}</p> : null}
       </form>
 
