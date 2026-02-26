@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import { decryptVideoBrowser, encryptVideoBrowser } from "@/lib/video-crypto-browser";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as tus from "tus-js-client";
 
 type VideoRow = {
   id: string;
@@ -20,6 +21,44 @@ const BUCKET = process.env.NEXT_PUBLIC_SUPABASE_VIDEO_BUCKET ?? "encrypted-video
 const MAX_UPLOAD_MB = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB ?? "1024");
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
+async function uploadWithTus(params: {
+  file: File;
+  objectPath: string;
+  accessToken: string;
+  onProgress?: (percent: number) => void;
+}) {
+  const endpoint = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/upload/resumable`;
+
+  await new Promise<void>((resolve, reject) => {
+    const upload = new tus.Upload(params.file, {
+      endpoint,
+      retryDelays: [0, 1000, 3000, 5000],
+      chunkSize: 6 * 1024 * 1024,
+      removeFingerprintOnSuccess: true,
+      uploadDataDuringCreation: true,
+      metadata: {
+        bucketName: BUCKET,
+        objectName: params.objectPath,
+        contentType: "application/octet-stream",
+      },
+      headers: {
+        authorization: `Bearer ${params.accessToken}`,
+        apikey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
+        "x-upsert": "false",
+      },
+      onError: (error) => reject(error),
+      onProgress: (uploaded, total) => {
+        if (params.onProgress && total > 0) {
+          params.onProgress(Math.round((uploaded / total) * 100));
+        }
+      },
+      onSuccess: () => resolve(),
+    });
+
+    upload.start();
+  });
+}
+
 function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -32,6 +71,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
   const router = useRouter();
   const [passphrase, setPassphrase] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [blobUrls, setBlobUrls] = useState<Record<string, string>>({});
@@ -54,6 +94,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
 
     try {
       setUploading(true);
+      setUploadProgress(0);
       setMessage(null);
       const plain = await file.arrayBuffer();
       const { encrypted, iv, authTag, algorithm } = await encryptVideoBrowser(plain, userId, passphrase);
@@ -62,12 +103,24 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
       const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
       const storagePath = `${userId}/${id}.${ext}.enc`;
 
-      const up = await supabase.storage.from(BUCKET).upload(storagePath, encrypted, {
-        contentType: "application/octet-stream",
-        upsert: false,
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("로그인 세션이 만료되었습니다. 다시 로그인해주세요.");
+      }
+
+      const encryptedFile = new File([encrypted], `${id}.enc`, {
+        type: "application/octet-stream",
       });
 
-      if (up.error) throw up.error;
+      await uploadWithTus({
+        file: encryptedFile,
+        objectPath: storagePath,
+        accessToken: session.access_token,
+        onProgress: setUploadProgress,
+      });
 
       const ins = await supabase.from("videos").insert({
         id,
@@ -90,6 +143,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
       setMessage(`업로드 실패: ${msg}`);
     } finally {
       setUploading(false);
+      setUploadProgress(0);
     }
   }
 
@@ -140,7 +194,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
             className="rounded-lg border px-3 py-2 text-sm"
           />
           <button disabled={uploading} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-            {uploading ? "업로드 중..." : "암호화 업로드"}
+            {uploading ? `업로드 중... ${uploadProgress}%` : "암호화 업로드"}
           </button>
         </div>
         <p className="mt-2 text-xs text-zinc-500">※ 비밀번호를 잊으면 복호화할 수 없습니다. 업로드 제한: {MAX_UPLOAD_MB}MB</p>
