@@ -16,7 +16,7 @@ export default async function Home() {
         현재 로그인 사용자: {user?.email ?? "로그인되지 않음"}
       </p>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Link
           href="/auth"
           className="rounded border px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-900"
@@ -25,11 +25,19 @@ export default async function Home() {
         </Link>
 
         {user ? (
-          <form action={signOut}>
-            <button className="rounded bg-black px-3 py-2 text-sm text-white dark:bg-white dark:text-black">
-              로그아웃
-            </button>
-          </form>
+          <>
+            <Link
+              href="/videos"
+              className="rounded bg-blue-600 px-3 py-2 text-sm text-white"
+            >
+              보안 영상 보관함
+            </Link>
+            <form action={signOut}>
+              <button className="rounded bg-black px-3 py-2 text-sm text-white dark:bg-white dark:text-black">
+                로그아웃
+              </button>
+            </form>
+          </>
         ) : null}
       </div>
 
