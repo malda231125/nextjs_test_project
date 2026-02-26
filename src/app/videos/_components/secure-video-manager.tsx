@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { decryptVideoBrowser, encryptVideoBrowser } from "@/lib/video-crypto-browser";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import * as tus from "tus-js-client";
 
@@ -14,6 +14,7 @@ type VideoRow = {
   storage_path: string;
   iv: string;
   auth_tag: string;
+  is_favorite?: boolean;
   created_at: string;
 };
 
@@ -100,6 +101,34 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
   const [blobUrls, setBlobUrls] = useState<Record<string, string>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteAcknowledge, setDeleteAcknowledge] = useState(false);
+  const [filterMode, setFilterMode] = useState<"all" | "favorite">("all");
+  const [videos, setVideos] = useState<VideoRow[]>(initialVideos);
+
+  useEffect(() => {
+    setVideos(initialVideos);
+  }, [initialVideos]);
+
+  const filteredVideos =
+    filterMode === "favorite" ? videos.filter((v) => v.is_favorite) : videos;
+
+  async function toggleFavorite(video: VideoRow) {
+    const next = !video.is_favorite;
+
+    // Optimistic UI update
+    setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, is_favorite: next } : v)));
+
+    const upd = await supabase
+      .from("videos")
+      .update({ is_favorite: next })
+      .eq("id", video.id)
+      .eq("user_id", userId);
+
+    if (upd.error) {
+      // rollback
+      setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, is_favorite: !next } : v)));
+      setMessage(`좋아요 변경 실패: ${upd.error.message}`);
+    }
+  }
 
   async function onUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -210,6 +239,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
 
       setDeletingId(null);
       setDeleteAcknowledge(false);
+      setVideos((prev) => prev.filter((v) => v.id !== video.id));
       setMessage(`삭제 완료: ${video.filename}`);
       router.refresh();
     } catch (err) {
@@ -295,18 +325,48 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
       </form>
 
       <section className="mt-8">
-        <h2 className="mb-4 text-xl font-semibold">내 영상 목록</h2>
-        {initialVideos.length === 0 ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold">내 영상 목록</h2>
+          <div className="inline-flex rounded-lg border p-1 text-sm">
+            <button
+              onClick={() => setFilterMode("all")}
+              className={`rounded-md px-3 py-1 ${filterMode === "all" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : ""}`}
+            >
+              전체
+            </button>
+            <button
+              onClick={() => setFilterMode("favorite")}
+              className={`rounded-md px-3 py-1 ${filterMode === "favorite" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : ""}`}
+            >
+              ❤️ 좋아요
+            </button>
+          </div>
+        </div>
+
+        {videos.length === 0 ? (
           <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-zinc-500">아직 업로드한 영상이 없습니다.</div>
+        ) : filteredVideos.length === 0 ? (
+          <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-zinc-500">좋아요 표시한 영상이 없습니다.</div>
         ) : (
           <ul className="grid gap-4 md:grid-cols-2">
-            {initialVideos.map((v) => (
+            {filteredVideos.map((v) => (
               <li key={v.id} className="min-w-0 overflow-hidden rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
                 <p className="truncate font-medium">{v.filename}</p>
                 <p className="mt-1 text-xs text-zinc-500">{new Date(v.created_at).toLocaleString()}</p>
                 <p className="mt-1 break-all text-xs text-zinc-500">{v.mime_type} · {formatBytes(v.size_bytes ?? 0)}</p>
 
                 <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => toggleFavorite(v)}
+                    className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                      v.is_favorite
+                        ? "bg-pink-600 text-white hover:bg-pink-500"
+                        : "border border-zinc-300 bg-white hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                    }`}
+                  >
+                    {v.is_favorite ? "❤️ 좋아요 취소" : "🤍 좋아요"}
+                  </button>
+
                   {!blobUrls[v.id] ? (
                     <button
                       onClick={() => playVideo(v)}

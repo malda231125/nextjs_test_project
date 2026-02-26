@@ -9,8 +9,11 @@ create table if not exists public.videos (
   iv text not null,
   auth_tag text not null,
   algorithm text not null default 'aes-256-gcm',
+  is_favorite boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table public.videos add column if not exists is_favorite boolean not null default false;
 
 alter table public.videos enable row level security;
 

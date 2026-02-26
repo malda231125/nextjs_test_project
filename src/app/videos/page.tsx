@@ -11,11 +11,25 @@ export default async function VideosPage() {
 
   if (!user) redirect(`/auth/login?message=${encodeURIComponent("로그인 후 이용해주세요.")}`);
 
-  const { data: videos } = await supabase
+  let videos: unknown[] = [];
+
+  const withFavorite = await supabase
     .from("videos")
-    .select("id, filename, mime_type, size_bytes, storage_path, iv, auth_tag, created_at")
+    .select("id, filename, mime_type, size_bytes, storage_path, iv, auth_tag, is_favorite, created_at")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
+
+  if (withFavorite.error) {
+    const fallback = await supabase
+      .from("videos")
+      .select("id, filename, mime_type, size_bytes, storage_path, iv, auth_tag, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    videos = (fallback.data ?? []).map((v) => ({ ...v, is_favorite: false }));
+  } else {
+    videos = withFavorite.data ?? [];
+  }
 
   return (
     <main className="mx-auto min-h-screen max-w-5xl px-6 py-10">
