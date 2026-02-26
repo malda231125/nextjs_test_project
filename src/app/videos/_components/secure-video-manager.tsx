@@ -98,7 +98,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [blobUrls, setBlobUrls] = useState<Record<string, string>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [confirmText, setConfirmText] = useState("");
+  const [deleteAcknowledge, setDeleteAcknowledge] = useState(false);
 
   async function onUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -184,8 +184,8 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
   }
 
   async function onDeleteVideo(video: VideoRow) {
-    if (confirmText !== video.filename) {
-      setMessage("삭제 확인 실패: 파일명을 정확히 입력해주세요.");
+    if (!deleteAcknowledge) {
+      setMessage("삭제 확인 체크 후 진행해주세요.");
       return;
     }
 
@@ -208,7 +208,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
       }
 
       setDeletingId(null);
-      setConfirmText("");
+      setDeleteAcknowledge(false);
       setMessage(`삭제 완료: ${video.filename}`);
       router.refresh();
     } catch (err) {
@@ -308,7 +308,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
                   <button
                     onClick={() => {
                       setDeletingId(v.id);
-                      setConfirmText("");
+                      setDeleteAcknowledge(false);
                     }}
                     className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-500"
                   >
@@ -324,19 +324,23 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
                   <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm dark:border-rose-800 dark:bg-rose-900/20">
                     <p className="font-semibold text-rose-700 dark:text-rose-300">삭제 확인</p>
                     <p className="mt-1 text-xs text-rose-700/90 dark:text-rose-300/90">
-                      실수 방지를 위해 아래에 파일명을 정확히 입력하세요:
+                      이 작업은 되돌릴 수 없습니다. 파일과 메타데이터가 함께 삭제됩니다.
                     </p>
                     <p className="mt-1 break-all rounded bg-white px-2 py-1 text-xs dark:bg-zinc-900">{v.filename}</p>
-                    <input
-                      value={confirmText}
-                      onChange={(e) => setConfirmText(e.target.value)}
-                      placeholder="파일명 입력"
-                      className="mt-2 w-full rounded border px-2 py-1 text-xs"
-                    />
+
+                    <label className="mt-2 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
+                      <input
+                        type="checkbox"
+                        checked={deleteAcknowledge}
+                        onChange={(e) => setDeleteAcknowledge(e.target.checked)}
+                      />
+                      위 내용을 확인했고 삭제에 동의합니다.
+                    </label>
+
                     <div className="mt-2 flex gap-2">
                       <button
                         onClick={() => onDeleteVideo(v)}
-                        disabled={confirmText !== v.filename}
+                        disabled={!deleteAcknowledge}
                         className="rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                       >
                         최종 삭제
@@ -344,7 +348,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
                       <button
                         onClick={() => {
                           setDeletingId(null);
-                          setConfirmText("");
+                          setDeleteAcknowledge(false);
                         }}
                         className="rounded border px-3 py-1.5 text-xs"
                       >
