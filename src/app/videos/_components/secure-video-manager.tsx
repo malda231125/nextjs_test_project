@@ -97,20 +97,24 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
   const [message, setMessage] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [blobUrls, setBlobUrls] = useState<Record<string, string>>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmText, setConfirmText] = useState("");
 
   async function onUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
     const input = form.elements.namedItem("file") as HTMLInputElement;
-    const file = input.files?.[0];
+    const files = Array.from(input.files ?? []);
 
-    if (!file) return;
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setMessage(`업로드 실패: 파일이 너무 큽니다. 현재 제한은 ${MAX_UPLOAD_MB}MB 입니다.`);
-      return;
-    }
+    if (files.length === 0) return;
     if (!passphrase || passphrase.length < 6) {
       setMessage("복호화 비밀번호를 6자 이상 입력해주세요.");
+      return;
+    }
+
+    const tooBig = files.find((f) => f.size > MAX_UPLOAD_BYTES);
+    if (tooBig) {
+      setMessage(`업로드 실패: ${tooBig.name} 파일이 너무 큽니다. 현재 제한은 ${MAX_UPLOAD_MB}MB 입니다.`);
       return;
     }
 
@@ -118,12 +122,6 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
       setUploading(true);
       setUploadProgress(0);
       setMessage(null);
-      const plain = await file.arrayBuffer();
-      const { encrypted, iv, authTag, algorithm } = await encryptVideoBrowser(plain, userId, passphrase);
-
-      const id = crypto.randomUUID();
-      const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
-      const storagePath = `${userId}/${id}.${ext}.enc`;
 
       const {
         data: { session },
@@ -133,31 +131,47 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
         throw new Error("로그인 세션이 만료되었습니다. 다시 로그인해주세요.");
       }
 
-      const encryptedFile = new File([encrypted], `${id}.enc`, {
-        type: "application/octet-stream",
-      });
+      let doneCount = 0;
+      for (const file of files) {
+        const plain = await file.arrayBuffer();
+        const { encrypted, iv, authTag, algorithm } = await encryptVideoBrowser(plain, userId, passphrase);
 
-      await uploadWithTus({
-        file: encryptedFile,
-        objectPath: storagePath,
-        accessToken: session.access_token,
-        onProgress: setUploadProgress,
-      });
+        const id = crypto.randomUUID();
+        const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
+        const storagePath = `${userId}/${id}.${ext}.enc`;
 
-      const ins = await supabase.from("videos").insert({
-        id,
-        user_id: userId,
-        filename: file.name,
-        mime_type: file.type || "video/mp4",
-        size_bytes: file.size,
-        storage_path: storagePath,
-        iv,
-        auth_tag: authTag,
-        algorithm,
-      });
-      if (ins.error) throw ins.error;
+        const encryptedFile = new File([encrypted], `${id}.enc`, {
+          type: "application/octet-stream",
+        });
 
-      setMessage("암호화 업로드 완료");
+        await uploadWithTus({
+          file: encryptedFile,
+          objectPath: storagePath,
+          accessToken: session.access_token,
+          onProgress: (p) => {
+            const overall = Math.floor(((doneCount + p / 100) / files.length) * 100);
+            setUploadProgress(overall);
+          },
+        });
+
+        const ins = await supabase.from("videos").insert({
+          id,
+          user_id: userId,
+          filename: file.name,
+          mime_type: file.type || "video/mp4",
+          size_bytes: file.size,
+          storage_path: storagePath,
+          iv,
+          auth_tag: authTag,
+          algorithm,
+        });
+        if (ins.error) throw ins.error;
+
+        doneCount += 1;
+        setUploadProgress(Math.floor((doneCount / files.length) * 100));
+      }
+
+      setMessage(`암호화 업로드 완료 (${files.length}개)`);
       form.reset();
       router.refresh();
     } catch (err) {
@@ -166,6 +180,40 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
     } finally {
       setUploading(false);
       setUploadProgress(0);
+    }
+  }
+
+  async function onDeleteVideo(video: VideoRow) {
+    if (confirmText !== video.filename) {
+      setMessage("삭제 확인 실패: 파일명을 정확히 입력해주세요.");
+      return;
+    }
+
+    try {
+      setMessage(null);
+
+      const rm = await supabase.storage.from(BUCKET).remove([video.storage_path]);
+      if (rm.error) throw rm.error;
+
+      const del = await supabase.from("videos").delete().eq("id", video.id).eq("user_id", userId);
+      if (del.error) throw del.error;
+
+      if (blobUrls[video.id]) {
+        URL.revokeObjectURL(blobUrls[video.id]);
+        setBlobUrls((prev) => {
+          const cp = { ...prev };
+          delete cp[video.id];
+          return cp;
+        });
+      }
+
+      setDeletingId(null);
+      setConfirmText("");
+      setMessage(`삭제 완료: ${video.filename}`);
+      router.refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "삭제 실패";
+      setMessage(`삭제 실패: ${msg}`);
     }
   }
 
@@ -205,6 +253,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
             name="file"
             type="file"
             accept="video/*"
+            multiple
             required
             className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-900 file:px-3 file:py-2 file:text-white dark:file:bg-zinc-100 dark:file:text-zinc-900"
           />
@@ -219,7 +268,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
             {uploading ? `업로드 중... ${uploadProgress}%` : "암호화 업로드"}
           </button>
         </div>
-        <p className="mt-2 text-xs text-zinc-500">※ 비밀번호를 잊으면 복호화할 수 없습니다. 업로드 제한: {MAX_UPLOAD_MB}MB</p>
+        <p className="mt-2 text-xs text-zinc-500">※ 비밀번호를 잊으면 복호화할 수 없습니다. 업로드 제한: {MAX_UPLOAD_MB}MB / 파일</p>
         {message ? <p className="mt-3 break-all text-sm text-zinc-700 dark:text-zinc-200">{message}</p> : null}
 
         <details className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-700 dark:bg-zinc-800/30">
@@ -245,17 +294,65 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
                 <p className="mt-1 text-xs text-zinc-500">{new Date(v.created_at).toLocaleString()}</p>
                 <p className="mt-1 break-all text-xs text-zinc-500">{v.mime_type} · {formatBytes(v.size_bytes ?? 0)}</p>
 
-                {!blobUrls[v.id] ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {!blobUrls[v.id] ? (
+                    <button
+                      onClick={() => playVideo(v)}
+                      disabled={playingId === v.id}
+                      className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+                    >
+                      {playingId === v.id ? "복호화 중..." : "복호화 후 재생"}
+                    </button>
+                  ) : null}
+
                   <button
-                    onClick={() => playVideo(v)}
-                    disabled={playingId === v.id}
-                    className="mt-3 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+                    onClick={() => {
+                      setDeletingId(v.id);
+                      setConfirmText("");
+                    }}
+                    className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-500"
                   >
-                    {playingId === v.id ? "복호화 중..." : "복호화 후 재생"}
+                    삭제
                   </button>
-                ) : (
+                </div>
+
+                {blobUrls[v.id] ? (
                   <video className="mt-3 w-full rounded-lg border bg-black" controls preload="metadata" src={blobUrls[v.id]} />
-                )}
+                ) : null}
+
+                {deletingId === v.id ? (
+                  <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm dark:border-rose-800 dark:bg-rose-900/20">
+                    <p className="font-semibold text-rose-700 dark:text-rose-300">삭제 확인</p>
+                    <p className="mt-1 text-xs text-rose-700/90 dark:text-rose-300/90">
+                      실수 방지를 위해 아래에 파일명을 정확히 입력하세요:
+                    </p>
+                    <p className="mt-1 break-all rounded bg-white px-2 py-1 text-xs dark:bg-zinc-900">{v.filename}</p>
+                    <input
+                      value={confirmText}
+                      onChange={(e) => setConfirmText(e.target.value)}
+                      placeholder="파일명 입력"
+                      className="mt-2 w-full rounded border px-2 py-1 text-xs"
+                    />
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={() => onDeleteVideo(v)}
+                        disabled={confirmText !== v.filename}
+                        className="rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        최종 삭제
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDeletingId(null);
+                          setConfirmText("");
+                        }}
+                        className="rounded border px-3 py-1.5 text-xs"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
