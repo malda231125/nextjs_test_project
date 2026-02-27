@@ -36,7 +36,7 @@ export default async function VideosPage() {
       <div className="mb-8 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">🔐 Secure Video Vault</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">업로드 시 암호화되어 Supabase Storage에 저장됩니다.</p>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">업로드 시 암호화되어 Cloudflare R2(신규) 또는 Supabase 백업 경로(기존)에 저장됩니다.</p>
         </div>
         <Link href="/" className="rounded-lg border px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-900">
           홈으로

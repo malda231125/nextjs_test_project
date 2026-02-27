@@ -4,7 +4,6 @@ import { createClient } from "@/lib/supabase/client";
 import { decryptVideoBrowser, encryptVideoBrowser } from "@/lib/video-crypto-browser";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import * as tus from "tus-js-client";
 
 type VideoRow = {
   id: string;
@@ -18,69 +17,8 @@ type VideoRow = {
   created_at: string;
 };
 
-const BUCKET = (process.env.NEXT_PUBLIC_SUPABASE_VIDEO_BUCKET ?? "encrypted-videos").trim();
-const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
 const MAX_UPLOAD_MB = Number((process.env.NEXT_PUBLIC_MAX_UPLOAD_MB ?? "1024").trim());
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
-
-async function uploadWithTus(params: {
-  file: File;
-  objectPath: string;
-  accessToken: string;
-  onProgress?: (percent: number) => void;
-}) {
-  const endpoint = `${SUPABASE_URL}/storage/v1/upload/resumable`;
-
-  await new Promise<void>((resolve, reject) => {
-    const upload = new tus.Upload(params.file, {
-      endpoint,
-      retryDelays: [0, 1000, 3000, 5000],
-      chunkSize: 6 * 1024 * 1024,
-      removeFingerprintOnSuccess: true,
-      uploadDataDuringCreation: true,
-      metadata: {
-        bucketName: BUCKET,
-        objectName: params.objectPath,
-        contentType: "application/octet-stream",
-      },
-      headers: {
-        authorization: `Bearer ${params.accessToken}`,
-        apikey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
-        "x-upsert": "false",
-      },
-      onError: (error) => {
-        const e = error as unknown as {
-          message?: string;
-          originalResponse?: { getStatus?: () => number; getBody?: () => string };
-          originalRequest?: { getMethod?: () => string; getURL?: () => string };
-        };
-
-        const status = e.originalResponse?.getStatus?.();
-        const body = e.originalResponse?.getBody?.();
-        const method = e.originalRequest?.getMethod?.();
-        const url = e.originalRequest?.getURL?.();
-        const detail = [
-          e.message,
-          method && url ? `request: ${method} ${url}` : null,
-          status ? `status: ${status}` : null,
-          body ? `response: ${body}` : null,
-        ]
-          .filter(Boolean)
-          .join(" | ");
-
-        reject(new Error(detail || "TUS upload failed"));
-      },
-      onProgress: (uploaded, total) => {
-        if (params.onProgress && total > 0) {
-          params.onProgress(Math.round((uploaded / total) * 100));
-        }
-      },
-      onSuccess: () => resolve(),
-    });
-
-    upload.start();
-  });
-}
 
 function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
@@ -153,36 +91,43 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
       setUploadProgress(0);
       setMessage(null);
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("로그인 세션이 만료되었습니다. 다시 로그인해주세요.");
-      }
-
       let doneCount = 0;
       for (const file of files) {
         const plain = await file.arrayBuffer();
         const { encrypted, iv, authTag, algorithm } = await encryptVideoBrowser(plain, userId, passphrase);
 
         const id = crypto.randomUUID();
-        const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
-        const storagePath = `${userId}/${id}.${ext}.enc`;
 
-        const encryptedFile = new File([encrypted], `${id}.enc`, {
-          type: "application/octet-stream",
+        const uploadTargetRes = await fetch("/api/videos/upload-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            filename: file.name,
+            contentType: "application/octet-stream",
+          }),
         });
 
-        await uploadWithTus({
-          file: encryptedFile,
-          objectPath: storagePath,
-          accessToken: session.access_token,
-          onProgress: (p) => {
-            const overall = Math.floor(((doneCount + p / 100) / files.length) * 100);
-            setUploadProgress(overall);
-          },
+        if (!uploadTargetRes.ok) {
+          const payload = (await uploadTargetRes.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error ?? "업로드 URL 발급 실패");
+        }
+
+        const uploadTarget = (await uploadTargetRes.json()) as {
+          storagePath: string;
+          uploadUrl: string;
+          requiredHeaders?: Record<string, string>;
+        };
+
+        const uploadRes = await fetch(uploadTarget.uploadUrl, {
+          method: "PUT",
+          headers: uploadTarget.requiredHeaders,
+          body: encrypted,
         });
+
+        if (!uploadRes.ok) {
+          throw new Error(`R2 업로드 실패 (${uploadRes.status})`);
+        }
 
         const ins = await supabase.from("videos").insert({
           id,
@@ -190,7 +135,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
           filename: file.name,
           mime_type: file.type || "video/mp4",
           size_bytes: file.size,
-          storage_path: storagePath,
+          storage_path: uploadTarget.storagePath,
           iv,
           auth_tag: authTag,
           algorithm,
@@ -222,11 +167,13 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
     try {
       setMessage(null);
 
-      const rm = await supabase.storage.from(BUCKET).remove([video.storage_path]);
-      if (rm.error) throw rm.error;
-
-      const del = await supabase.from("videos").delete().eq("id", video.id).eq("user_id", userId);
-      if (del.error) throw del.error;
+      const del = await fetch(`/api/videos/${video.id}`, {
+        method: "DELETE",
+      });
+      if (!del.ok) {
+        const payload = (await del.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? "삭제 실패");
+      }
 
       if (blobUrls[video.id]) {
         URL.revokeObjectURL(blobUrls[video.id]);
@@ -260,10 +207,20 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
 
       if (blobUrls[v.id]) return;
 
-      const dl = await supabase.storage.from(BUCKET).download(v.storage_path);
-      if (dl.error || !dl.data) throw dl.error ?? new Error("download failed");
+      const urlRes = await fetch(`/api/videos/${v.id}/download-url`);
+      if (!urlRes.ok) {
+        const payload = (await urlRes.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? "다운로드 URL 발급 실패");
+      }
 
-      const encrypted = new Uint8Array(await dl.data.arrayBuffer());
+      const payload = (await urlRes.json()) as { downloadUrl: string };
+      const dl = await fetch(payload.downloadUrl, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!dl.ok) throw new Error(`download failed (${dl.status})`);
+
+      const encrypted = new Uint8Array(await dl.arrayBuffer());
       const decrypted = await decryptVideoBrowser(encrypted, userId, passphrase, v.iv, v.auth_tag);
       const blob = new Blob([decrypted], { type: v.mime_type || "video/mp4" });
       const url = URL.createObjectURL(blob);
@@ -316,8 +273,7 @@ export function SecureVideoManager({ userId, initialVideos }: { userId: string; 
         <details className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-700 dark:bg-zinc-800/30">
           <summary className="cursor-pointer font-semibold">업로드 디버그 정보</summary>
           <ul className="mt-2 space-y-1 break-all text-zinc-600 dark:text-zinc-300">
-            <li>bucket: {BUCKET}</li>
-            <li>endpoint: {SUPABASE_URL}/storage/v1/upload/resumable</li>
+            <li>storage provider: Cloudflare R2 (private signed URL)</li>
             <li>maxUploadMB: {MAX_UPLOAD_MB}</li>
             <li>userId: {userId}</li>
           </ul>
