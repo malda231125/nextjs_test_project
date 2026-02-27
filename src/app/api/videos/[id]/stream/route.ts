@@ -1,6 +1,7 @@
-import { downloadEncryptedObject } from "@/lib/storage";
 import { createClient } from "@/lib/supabase/server";
 import { decryptVideo } from "@/lib/video-crypto";
+
+const BUCKET = process.env.SUPABASE_VIDEO_BUCKET ?? "encrypted-videos";
 
 export async function GET(
   request: Request,
@@ -23,12 +24,10 @@ export async function GET(
 
   if (error || !video) return new Response("Not found", { status: 404 });
 
-  let encrypted: Buffer;
-  try {
-    encrypted = Buffer.from(await downloadEncryptedObject(video.storage_path));
-  } catch {
-    return new Response("Storage download failed", { status: 500 });
-  }
+  const dl = await supabase.storage.from(BUCKET).download(video.storage_path);
+  if (dl.error || !dl.data) return new Response("Storage download failed", { status: 500 });
+
+  const encrypted = Buffer.from(await dl.data.arrayBuffer());
   let decrypted: Buffer;
   try {
     decrypted = decryptVideo(encrypted, user.id, video.iv, video.auth_tag);

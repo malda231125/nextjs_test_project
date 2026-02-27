@@ -6,15 +6,12 @@ Next.js + Supabase 기반의 **로그인 사용자 전용 보안 영상 보관�
 
 - 이메일 로그인/회원가입(Supabase Auth)
 - 로그인 사용자만 접근 가능한 `/videos` 페이지
-- 영상 업로드 시 브라우저에서 AES-256-GCM 암호화 후 Cloudflare R2(private) 저장
-- 기존 Supabase Storage 파일은 백업 경로로 계속 접근 가능 (mixed mode)
+- 영상 업로드 시 서버에서 AES-256-GCM 암호화 후 Supabase Storage 저장
 - 사용자별 영상 목록 표시
-- 영상 클릭 시 암호문 다운로드 후 브라우저 복호화 재생
+- 영상 클릭 시 서버에서 복호화하여 스트리밍 재생
 - Tailwind CSS 기반 UI
 
 > 저장소(Storage)에는 평문 영상이 아닌 암호문(`*.enc`)만 저장됩니다.
->
-> R2 이관 가이드는 `docs/r2-migration.md`를 참고하세요.
 
 ---
 
